@@ -1,0 +1,434 @@
+# Code refactored from:
+# https://github.com/junyanz/pytorch-CycleGAN-and-pix2pix
+
+from os import path, makedirs
+from functools import partial
+from PIL import Image
+from torch import cat, load, nn, cuda, device
+from torch.utils import data
+from torch.backends.cudnn import benchmark
+from torchvision import transforms
+
+from utils.parameters import Parameters
+
+class ResnetGenerator(nn.Module):
+    def __init__(self, input_nc, output_nc, ngf=64, norm_layer=nn.BatchNorm2d,
+                 use_dropout=False, n_blocks=6, padding_type='reflect'):
+        assert(n_blocks >= 0)
+        super(ResnetGenerator, self).__init__()
+        if type(norm_layer) == partial:
+            use_bias = norm_layer.func == nn.InstanceNorm2d
+        else:
+            use_bias = norm_layer == nn.InstanceNorm2d
+        model = [
+            nn.ReflectionPad2d(3),
+            nn.Conv2d(input_nc, ngf, kernel_size=7, padding=0, bias=use_bias),
+            norm_layer(ngf),
+            nn.ReLU(True)
+        ]
+        n_downsampling = 2
+        for i in range(n_downsampling):
+            mult = 2 ** i
+            model += [
+                nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=3, stride=2,
+                          padding=1, bias=use_bias),
+                norm_layer(ngf * mult * 2),
+                nn.ReLU(True)
+            ]
+        mult = 2 ** n_downsampling
+        for i in range(n_blocks):
+            model += [
+                ResnetBlock(ngf * mult, padding_type=padding_type,
+                            norm_layer=norm_layer, use_dropout=use_dropout,
+                            use_bias=use_bias)
+            ]
+        for i in range(n_downsampling):
+            mult = 2 ** (n_downsampling - i)
+            model += [
+                nn.ConvTranspose2d(ngf * mult, int(ngf * mult / 2),
+                                   kernel_size=3, stride=2, padding=1,
+                                   output_padding=1, bias=use_bias),
+                norm_layer(int(ngf * mult / 2)),
+                nn.ReLU(True)
+            ]
+        model += [nn.ReflectionPad2d(3)]
+        model += [nn.Conv2d(ngf, output_nc, kernel_size=7, padding=0)]
+        model += [nn.Tanh()]
+
+        self.model = nn.Sequential(*model)
+
+    def forward(self, input):
+        return self.model(input)
+
+    def __str__(self):
+        return f'Resnet'
+
+class ResnetBlock(nn.Module):
+    def __init__(self, dim, padding_type, norm_layer, use_dropout, use_bias):
+        super(ResnetBlock, self).__init__()
+        self.conv_block = self.build_conv_block(dim, padding_type, norm_layer,
+                                                use_dropout, use_bias)
+
+    def build_conv_block(self, dim, padding_type, norm_layer, use_dropout,
+                         use_bias):
+        conv_block = []
+        p = 0
+        if padding_type == 'reflect':
+            conv_block += [nn.ReflectionPad2d(1)]
+        elif padding_type == 'replicate':
+            conv_block += [nn.ReplicationPad2d(1)]
+        elif padding_type == 'zero':
+            p = 1
+        else:
+            raise NotImplementedError(
+                f'padding [{padding_type}] is not implemented'
+            )
+        conv_block += [
+            nn.Conv2d(dim, dim, kernel_size=3, padding=p, bias=use_bias),
+            norm_layer(dim),
+            nn.ReLU(True)
+        ]
+        if use_dropout:
+            conv_block += [nn.Dropout(0.5)]
+        p = 0
+        if padding_type == 'reflect':
+            conv_block += [nn.ReflectionPad2d(1)]
+        elif padding_type == 'replicate':
+            conv_block += [nn.ReplicationPad2d(1)]
+        elif padding_type == 'zero':
+            p = 1
+        else:
+            raise NotImplementedError(
+                f'padding [{padding_type}] is not implemented'
+            )
+        conv_block += [
+            nn.Conv2d(dim, dim, kernel_size=3, padding=p, bias=use_bias),
+            norm_layer(dim)
+        ]
+        return nn.Sequential(*conv_block)
+
+    def forward(self, x):
+        out = x + self.conv_block(x)
+        return out
+
+class UnetGenerator(nn.Module):
+    def __init__(self, input_nc, output_nc, num_downs, ngf=64,
+                 norm_layer=nn.BatchNorm2d, use_dropout=False):
+        super(UnetGenerator, self).__init__()
+        unet_block = UnetSkipConnectionBlock(ngf * 8, ngf * 8, input_nc=None,
+                                             submodule=None, innermost=True,
+                                             norm_layer=norm_layer)
+        for i in range(num_downs - 5):
+            unet_block = UnetSkipConnectionBlock(ngf * 8, ngf * 8, None,
+                                                 submodule=unet_block,
+                                                 norm_layer=norm_layer,
+                                                 use_dropout=use_dropout)
+        for o, i in zip([4, 2, 1], [8, 4, 2]):
+            unet_block = UnetSkipConnectionBlock(ngf * o, ngf * i, None,
+                                                 submodule=unet_block,
+                                                 norm_layer=norm_layer)
+        self.model = UnetSkipConnectionBlock(output_nc, ngf, input_nc=input_nc,
+                                             submodule=unet_block,
+                                             outermost=True,
+                                             norm_layer=norm_layer)
+
+    def forward(self, input):
+        return self.model(input)
+
+    def __str__(self):
+        return f'Unet'
+
+class UnetSkipConnectionBlock(nn.Module):
+    def __init__(self, outer_nc, inner_nc, input_nc=None, submodule=None,
+                 outermost=False, innermost=False, norm_layer=nn.BatchNorm2d,
+                 use_dropout=False):
+        super(UnetSkipConnectionBlock, self).__init__()
+        self.outermost = outermost
+        if type(norm_layer) == partial:
+            use_bias = norm_layer.func == nn.InstanceNorm2d
+        else:
+            use_bias = norm_layer == nn.InstanceNorm2d
+        if input_nc is None:
+            input_nc = outer_nc
+        downconv = nn.Conv2d(input_nc, inner_nc, kernel_size=4, stride=2,
+                             padding=1, bias=use_bias)
+        downrelu = nn.LeakyReLU(0.2, True)
+        downnorm = norm_layer(inner_nc)
+        uprelu = nn.ReLU(True)
+        upnorm = norm_layer(outer_nc)
+        if outermost:
+            upconv = nn.ConvTranspose2d(inner_nc * 2, outer_nc,
+                                        kernel_size=4, stride=2,
+                                        padding=1)
+            down = [downconv]
+            up = [uprelu, upconv, nn.Tanh()]
+            model = down + [submodule] + up
+        elif innermost:
+            upconv = nn.ConvTranspose2d(inner_nc, outer_nc,
+                                        kernel_size=4, stride=2,
+                                        padding=1, bias=use_bias)
+            down = [downrelu, downconv]
+            up = [uprelu, upconv, upnorm]
+            model = down + up
+        else:
+            upconv = nn.ConvTranspose2d(inner_nc * 2, outer_nc,
+                                        kernel_size=4, stride=2,
+                                        padding=1, bias=use_bias)
+            down = [downrelu, downconv, downnorm]
+            up = [uprelu, upconv, upnorm]
+            if use_dropout:
+                model = down + [submodule] + up + [nn.Dropout(0.5)]
+            else:
+                model = down + [submodule] + up
+        self.model = nn.Sequential(*model)
+
+    def forward(self, x):
+        if self.outermost:
+            return self.model(x)
+        else:
+            return cat([x, self.model(x)], 1)
+
+def get_norm_layer(norm_type='instance'):
+    if norm_type == 'batch':
+        norm_layer = partial(nn.BatchNorm2d, affine=True,
+                             track_running_stats=True)
+    elif norm_type == 'instance':
+        norm_layer = partial(nn.InstanceNorm2d, affine=False,
+                             track_running_stats=False)
+    elif norm_type == 'none':
+        norm_layer = None
+    else:
+        raise NotImplementedError(
+            f'normalization layer [{norm_type}] is not found'
+        )
+    return norm_layer
+
+def init_weights(net, init_type='normal', init_gain=0.02):
+    def init_func(m):
+        classname = m.__class__.__name__
+        layer = classname.find('Conv') != -1 or classname.find('Linear') != -1
+        if hasattr(m, 'weight') and layer:
+            if init_type == 'normal':
+                nn.init.normal_(m.weight.data, 0., init_gain)
+            elif init_type == 'xavier':
+                nn.init.xavier_normal_(m.weight.data, gain=init_gain)
+            elif init_type == 'kaiming':
+                nn.init.kaiming_normal_(m.weight.data, a=0, mode='fan_in')
+            elif init_type == 'orthogonal':
+                nn.init.orthogonal_(m.weight.data, gain=init_gain)
+            else:
+                raise NotImplementedError(
+                    f'initialization method [{init_type}] is not implemented'
+                )
+            if hasattr(m, 'bias') and m.bias is not None:
+                nn.init.constant_(m.bias.data, 0.)
+        elif classname.find('BatchNorm2d') != -1:
+            nn.init.normal_(m.weight.data, 1., init_gain)
+            nn.init.constant_(m.bias.data, 0.)
+    net.apply(init_func)
+
+def init_net(net, init_type='normal', init_gain=0.02, gpu_ids=[]):
+    # if len(gpu_ids) > 0:
+    assert(cuda.is_available())
+    #net.to(gpu_ids[0])
+    #net = nn.DataParallel(net, gpu_ids)
+    init_weights(net, init_type, init_gain=init_gain)
+    return net
+
+def define_G(input_nc, output_nc, ngf, netG, norm='batch', use_dropout=False,
+             init_type='normal', init_gain=0.02, gpu_ids=[]):
+    net = None
+    norm_layer = get_norm_layer(norm_type=norm)
+    if 'resnet' in netG:
+        n_blocks = 6 if '6blocks' in netG else 9
+        net = ResnetGenerator(input_nc, output_nc, ngf, norm_layer,
+                              use_dropout, n_blocks)
+    elif 'unet' in netG:
+        num_downs_map = {'128': 7, '256': 8, '512': 9, '1024': 10}
+        num_downs = num_downs_map[netG.split('_')[1]]
+        net = UnetGenerator(input_nc, output_nc, num_downs, ngf, norm_layer,
+                            use_dropout)
+    else:
+        raise NotImplementedError(
+            f'Generator model name [{netG}] is not recognized'
+        )
+    return init_net(net, init_type, init_gain, gpu_ids)
+
+class MinimalOptions(Parameters):
+    def __init__(self, print_options=False):
+        super(MinimalOptions, self).__init__()
+        self.transform = self.__get_transform(grayscale=(self.input_nc == 1))
+        if self.preprocess != 'scale_width':
+            benchmark = True
+
+        # Setting up Devices
+        if self.gpu_ids != '':
+            str_ids = self.gpu_ids.split(',')
+            self.gpu_ids = [int(id) for id in str_ids if int(id) >= 0]
+            if len(self.gpu_ids) > 0:
+                cuda.set_device(self.gpu_ids[0])
+        if self.gpu_ids:
+            self.device = device('cuda')
+        else:
+            self.device = device('cpu')
+        self.save_dir = path.join(self.checkpoints_dir, self.name)
+
+        # Define Generator
+        self.netG = define_G(self.input_nc, self.output_nc, self.ngf, self.netG,
+                             self.norm, not self.no_dropout, self.init_type,
+                             self.init_gain, self.gpu_ids)
+
+        # Printing/Exporting Options
+        options = self.__get_options()
+        if print_options:
+            print(options)
+        self.__save_options(options)
+
+    def __get_options(self):
+        options = '-------- Options ----------------------\n'
+        for k, v in sorted(vars(self).items()):
+            options += f'{str(k):>16}: {v}\n'
+        options += '---------------------------------------'
+        return options
+
+    def __save_options(self, options):
+        expr_dir = path.join(self.checkpoints_dir, self.name)
+        makedirs(expr_dir, exist_ok=True)
+        file_name = path.join(expr_dir, 'opt.txt')
+        with open(file_name, 'wt') as opt_file:
+            opt_file.write(options)
+            opt_file.write('\n')
+
+    def __get_transform(self, params=None, grayscale=False,
+                        method=Image.BICUBIC, convert=True):
+        transform_list = []
+        if grayscale:
+            transform_list.append(transforms.Grayscale(1))
+
+        def __trans_resize(img):
+            return __scale_width(img, self.load_size, method)
+
+        if 'resize' in self.preprocess:
+            osize = [self.load_size, self.load_size]
+            transform_list.append(transforms.Resize(osize, method))
+        elif 'scale_width' in self.preprocess:
+            transform_list.append(
+                transforms.Lambda(
+                    __trans_resize
+                )
+            )
+
+        def __trans_crop(img):
+            return self.__crop(img, params['crop_pos'], self.crop_size)
+
+        if 'crop' in self.preprocess:
+            if params is None:
+                transform_list.append(transforms.RandomCrop(self.crop_size))
+            else:
+                transform_list.append(
+                    transforms.Lambda(
+                        __trans_crop
+                    )
+                )
+
+        def __trans_none(img):
+            return self.__make_power_2(img, base=4, method=method)
+
+        if self.preprocess == 'none':
+            transform_list.append(
+                transforms.Lambda(
+                    __trans_none
+                )
+            )
+
+        def __trans_flip(img):
+            return self.__flip(img, params['flip'])
+
+        if not self.no_flip:
+            if params is None:
+                transform_list.append(transforms.RandomHorizontalFlip())
+            elif params['flip']:
+                transform_list.append(
+                    transforms.Lambda(
+                        __trans_flip
+                    )
+                )
+
+        if convert:
+            transform_list += [
+                transforms.ToTensor(),
+                transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+            ]
+
+        preprocess = self.preprocess
+        def __trans_preprocess(self):
+            return preprocess
+        transforms.Compose.__str__ = __trans_preprocess
+        return transforms.Compose(transform_list)
+    
+    def __crop(self, img, pos, size):
+        ow, oh = img.size
+        x1, y1 = pos
+        tw = th = size
+        if (ow > tw or oh > th):
+            return img.crop((x1, y1, x1 + tw, y1 + th))
+        return img
+    
+    def __make_power_2(self, img, base, method=Image.BICUBIC):
+        ow, oh = img.size
+        h = int(round(oh / base) * base)
+        w = int(round(ow / base) * base)
+        if (h == oh) and (w == ow):
+            return img
+        return img.resize((w, h), method)
+
+    def __flip(self, img, flip):
+        if flip:
+            return img.transpose(Image.FLIP_LEFT_RIGHT)
+        return img
+
+def create_dataset(opt, input_batch, num_workers, batch_size):
+    class CustomTorchDataset(data.Dataset):
+        def __init__(self, opt):
+            self.transform = opt.transform
+            self.len = len(input_batch)
+        def __getitem__(self, index):
+            A_img = Image.fromarray(input_batch[index], mode='RGB')
+            return {'A': self.transform(A_img)}
+        def __len__(self):
+            return self.len
+    dataset = CustomTorchDataset(opt)
+    data_loader = data.DataLoader(dataset=dataset, batch_size=opt.batch_size,
+                                  shuffle=False, num_workers=opt.num_threads)
+    return data_loader
+
+def load_model(opt, pth_name):
+    def __patch_instance_norm_state_dict(state_dict, module, keys, i=0):
+        key = keys[i]
+        if i + 1 == len(keys):
+            if module.__class__.__name__.startswith('InstanceNorm') and \
+                    (key == 'running_mean' or key == 'running_var'):
+                if getattr(module, key) is None:
+                    state_dict.pop('.'.join(keys))
+            if module.__class__.__name__.startswith('InstanceNorm') and \
+                    (key == 'num_batches_tracked'):
+                state_dict.pop('.'.join(keys))
+        else:
+            __patch_instance_norm_state_dict(state_dict, getattr(module, key),
+                                             keys, i + 1)
+    #load_path = path.join(opt.checkpoints_dir, opt.name, pth_name)
+    # changed to pth_name ---> is senden as arg when called through Grasshopper
+    load_path = str(pth_name)
+    print(load_path)
+    model = opt.netG
+    print(model)
+    if isinstance(model, nn.DataParallel):
+        model = model.module
+    state_dict = load(load_path, map_location=str(opt.device))
+    if hasattr(state_dict, '_metadata'):
+        del state_dict._metadata
+    for keys in list(state_dict.keys()):
+        __patch_instance_norm_state_dict(state_dict, model, keys.split('.'))
+    model.load_state_dict(state_dict)
+    model.eval()
+    return model
