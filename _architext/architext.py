@@ -684,7 +684,7 @@ def main():
     env = Architext(seed, config, height=2.0, prompts=prompts)
     elites = MAPElites(env, n_bins=12)
     for i in range(10):
-        print("Best image", elites.search(initsteps=4 if i != 0 else 0, totalsteps=8))
+        print("Best image", elites.search(initsteps=4 if i == 0 else 0, totalsteps=8))
         with open('elites_ckpt_i', 'wb') as f:
             pickle.dump(elites, f)
 
