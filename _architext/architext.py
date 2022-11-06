@@ -341,14 +341,17 @@ class LocalGenerator:
             token: hf token.
             model_str: (Optional) hf model string.
         """
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
         self.token = token
         self.tokenizer = AutoTokenizer.from_pretrained(model_str, use_auth_token=self.token)
-        self.model = AutoModelForCausalLM.from_pretrained(model_str, use_auth_token=self.token)
+        self.model = AutoModelForCausalLM.from_pretrained(model_str, use_auth_token=self.token).to(self.device)
 
     def __call__(self, prompt, batch_size=16, **kwargs):
         config = {'return_tensors': 'pt'}
 
-        output = self.model.generate(**self.tokenizer(prompt, **config), num_return_sequences=batch_size, **kwargs)
+        output = self.model.generate(**self.tokenizer(prompt, **config).to(self.device),
+                                     num_return_sequences=batch_size, **kwargs)
         return self.tokenizer.batch_decode(output)
 
 
