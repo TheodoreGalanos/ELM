@@ -685,7 +685,7 @@ def main():
     elites = MAPElites(env, n_bins=12)
     for i in range(10):
         print("Best image", elites.search(initsteps=4 if i == 0 else 0, totalsteps=8))
-        with open('elites_ckpt_i', 'wb') as f:
+        with open(f'elites_ckpt_{i}', 'wb') as f:
             pickle.dump(elites, f)
 
 if __name__ == '__main__':
