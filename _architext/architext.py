@@ -359,7 +359,7 @@ class LocalGenerator:
     def __call__(self, prompt, batch_size=16, **kwargs):
         config = {'return_tensors': 'pt'}
 
-        output = self.model.generate(**self.tokenizer(prompt, **config).to(self.device),
+        output = self.model.generate(**self.tokenizer(prompt, **config).to(self.device), eos_token_id=50256, top_k=0, top_p=0.95, temperature=0.85,
                                      num_return_sequences=batch_size, **kwargs)
         return self.tokenizer.batch_decode(output)
 
