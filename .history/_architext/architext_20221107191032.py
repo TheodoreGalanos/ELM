@@ -696,8 +696,8 @@ def main():
     elites = MAPElites(env, n_bins=20)
     iterations = 100
     for i in tqdm(range(iterations), leave=True, position=0):
-        print("Best image", elites.search(initsteps=4 if i == 0 else 0, totalsteps=8))
-        if(i==99):
+        print("Best image", elites.search(initsteps=4 if i == 0 else 0, totalsteps=16))
+        if(i==49):
             with open(f'elites_ckpt_{i}', 'wb') as f:
                 pickle.dump(elites, f)
         qd_score.append(elites.qd_score)

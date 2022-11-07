@@ -11,10 +11,7 @@ from abc import ABC, abstractmethod
 from typing import Optional, Union, TypeVar, Generic
 
 import numpy as np
-from tqdm import trange, tqdm
-
-from visualization import lineplot
-
+from tqdm import trange
 
 Phenotype = Optional[np.ndarray]
 Mapindex = Optional[tuple]
@@ -51,9 +48,6 @@ class MAPElites:
 
         # outdated elites
         self.old_elites = []
-
-        # qd-score
-        self.qd_score = 0
 
         print(f"MAP of size: {self.fitnesses.shape} = {self.fitnesses.size}")
 
@@ -114,9 +108,6 @@ class MAPElites:
                 # If best fitness is within atol of the maximum possible fitness, stop.
                 if np.isclose(max_fitness, self.env.max_fitness, atol=atol):
                     break
-            
-            self.qd_score = np.sum(np.absolute(np.nan_to_num(self.fitnesses, neginf=0)))
-            tbar.set_description(f'QD Score for iteration {n_steps}: {self.qd_score=:.4f}')
 
         return str(self.genomes[np.unravel_index(self.fitnesses.argmax(), self.fitnesses.shape)])
 
@@ -142,11 +133,11 @@ class BaseEnvironment(ABC, Generic[GenoType]):
         self.genotype_space: np.ndarray
 
     @abstractmethod
-    def random(self, n_seed, **kwarg) -> 'list[GenoType]':
+    def random(self, n_seed, **kwarg) -> list[GenoType]:
         raise NotImplementedError
 
     @abstractmethod
-    def mutate(self, x: GenoType, **kwarg) -> 'list[GenoType]':
+    def mutate(self, x: GenoType, **kwarg) -> list[GenoType]:
         raise NotImplementedError
 
     @abstractmethod
@@ -499,7 +490,7 @@ class Architext(BaseEnvironment):
     # Record different definitions of behaviour spaces in a dict. Feel free to add.
     behaviour_mode_spec = {'hlff_and_fae':
                                {'genotype_ndim': 2,
-                                'genotype_space': np.array([[0.5, 5.5], [0, 10]]).T
+                                'genotype_space': np.array([[0, 3.25], [0, 12]]).T
                                 }
                            }
     model_param = {'do_sample': True,
@@ -685,24 +676,20 @@ class Architext(BaseEnvironment):
 
 def main():
     import pickle
-    qd_score = []
+
     seed = ""
     # target = "bedroom1: (194,106)(165,106)(165,47)(194,47), living_room: (179,223)(106,223)(106,121)(165,121)(165,135)(179,135), bathroom1: (165,106)(135,106)(135,77)(165,77), bedroom2: (135,106)(91,106)(91,33)(135,33), bathroom2: (106,165)(77,165)(77,135)(106,135), bedroom3: (91,106)(77,106)(77,121)(47,121)(47,62)(91,62), kitchen: (209,194)(179,194)(179,135)(194,135)(194,121)(209,121), corridor: (194,135)(165,135)(165,121)(106,121)(106,135)(77,135)(77,106)(194,106) <|endoftext|>"
-    prompts = prompts = np.loadtxt('prompts.txt', dtype=str, delimiter='\n')
-    prompts = ['[prompt] ' + prompt.rstrip() + ' [layout]' for prompt in prompts] 
+    prompts = ["[prompt] a house with seven rooms and a corridor [layout]",
+               "[prompt] a bedroom is located in the east side of the house [layout]",
+               "[prompt] a house with two bedrooms and one bathroom [layout]"]
 
     config = {'seed': 42, }
-    env = Architext(seed, config, height=2.3, prompts=prompts)
-    elites = MAPElites(env, n_bins=20)
-    iterations = 100
-    for i in tqdm(range(iterations), leave=True, position=0):
+    env = Architext(seed, config, height=2.0, prompts=prompts)
+    elites = MAPElites(env, n_bins=12)
+    for i in range(10):
         print("Best image", elites.search(initsteps=4 if i == 0 else 0, totalsteps=8))
-        if(i==99):
-            with open(f'elites_ckpt_{i}', 'wb') as f:
-                pickle.dump(elites, f)
-        qd_score.append(elites.qd_score)
-    np.save('test.npy', np.array(qd_score))
-    g = lineplot(np.arange(1, len(qd_score)+1, 1), np.array(qd_score), color='green', xlabel='Iteration', ylabel='QD Score', title="Architext with prompt-based mutation - QD Score", fontsize=20, ymax=150, xmax=10, save_file='QDScore_architext_entropy-typology_hlff.png')
-    g.figure.savefig('test.png')
+        with open(f'elites_ckpt_{i}', 'wb') as f:
+            pickle.dump(elites, f)
+
 if __name__ == '__main__':
     main()

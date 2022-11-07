@@ -11,7 +11,7 @@ from abc import ABC, abstractmethod
 from typing import Optional, Union, TypeVar, Generic
 
 import numpy as np
-from tqdm import trange, tqdm
+from tqdm import trange
 
 from visualization import lineplot
 
@@ -499,7 +499,7 @@ class Architext(BaseEnvironment):
     # Record different definitions of behaviour spaces in a dict. Feel free to add.
     behaviour_mode_spec = {'hlff_and_fae':
                                {'genotype_ndim': 2,
-                                'genotype_space': np.array([[0.5, 5.5], [0, 10]]).T
+                                'genotype_space': np.array([[0, 3], [0, 12]]).T
                                 }
                            }
     model_param = {'do_sample': True,
@@ -688,16 +688,16 @@ def main():
     qd_score = []
     seed = ""
     # target = "bedroom1: (194,106)(165,106)(165,47)(194,47), living_room: (179,223)(106,223)(106,121)(165,121)(165,135)(179,135), bathroom1: (165,106)(135,106)(135,77)(165,77), bedroom2: (135,106)(91,106)(91,33)(135,33), bathroom2: (106,165)(77,165)(77,135)(106,135), bedroom3: (91,106)(77,106)(77,121)(47,121)(47,62)(91,62), kitchen: (209,194)(179,194)(179,135)(194,135)(194,121)(209,121), corridor: (194,135)(165,135)(165,121)(106,121)(106,135)(77,135)(77,106)(194,106) <|endoftext|>"
-    prompts = prompts = np.loadtxt('prompts.txt', dtype=str, delimiter='\n')
+    prompts = prompts = np.loadtxt('_architext/prompts.txt', dtype=str, delimiter='\n')
     prompts = ['[prompt] ' + prompt.rstrip() + ' [layout]' for prompt in prompts] 
 
     config = {'seed': 42, }
-    env = Architext(seed, config, height=2.3, prompts=prompts)
-    elites = MAPElites(env, n_bins=20)
-    iterations = 100
-    for i in tqdm(range(iterations), leave=True, position=0):
+    env = Architext(seed, config, height=2.0, prompts=prompts)
+    elites = MAPElites(env, n_bins=12)
+    iterations = 50
+    for i in range(iterations):
         print("Best image", elites.search(initsteps=4 if i == 0 else 0, totalsteps=8))
-        if(i==99):
+        if(i==49):
             with open(f'elites_ckpt_{i}', 'wb') as f:
                 pickle.dump(elites, f)
         qd_score.append(elites.qd_score)
