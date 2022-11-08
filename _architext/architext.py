@@ -550,13 +550,13 @@ class Architext(BaseEnvironment):
                 self._get_layout(self.seed + random.choice(self.prompts), **self.model_param, **kwargs)]
 
     def mutate(self, x: Genotype, **kwargs) -> List[ArchitextGenotype]:
-        # TODO: batch_size > 1 is not implemented yet!!
         lines = x.layout.split(', ')
+        random_prompt = random.choice(self.prompts)
 
         cut_off = np.random.randint(1, 3, size=1)[0]
         cut_off = min(cut_off, len(lines) - 1)
-        new_prompt = lines[0] + ', ' + ', '.join(lines[1:cut_off]) + ", " + random.choice(self.room_labels) + ":"
-        # print(new_prompt)
+        new_prompt = random_prompt + ' ' + ', '.join(lines[1:cut_off + 1]) + ", " + random.choice(self.room_labels) + ":"
+
         return [ArchitextGenotype(code='', layout=x, height=self.height) for x in
                 self._get_layout(new_prompt, **self.model_param, **kwargs)]
 
@@ -696,10 +696,9 @@ def main():
     elites = MAPElites(env, n_bins=20)
     iterations = 100
     for i in tqdm(range(iterations), leave=True, position=0):
-        print("Best image", elites.search(initsteps=4 if i == 0 else 0, totalsteps=8))
-        if(i==99):
-            with open(f'elites_ckpt_{i}', 'wb') as f:
-                pickle.dump(elites, f)
+        elites.search(initsteps=4 if i == 0 else 0, totalsteps=8, batch_size=32)
+        with open(f'elites_ckpt', 'wb') as f:
+            pickle.dump(elites, f)
         qd_score.append(elites.qd_score)
     np.save('test.npy', np.array(qd_score))
     g = lineplot(np.arange(1, len(qd_score)+1, 1), np.array(qd_score), color='green', xlabel='Iteration', ylabel='QD Score', title="Architext with prompt-based mutation - QD Score", fontsize=20, ymax=150, xmax=10, save_file='QDScore_architext_entropy-typology_hlff.png')
