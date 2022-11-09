@@ -35,7 +35,7 @@ def show_values_on_bars(axs):
     else:
         _show_on_single_plot(axs)
 
-def create_mosaic(base_map=(27, 27), base_tile_size=100, step=1, bg_color="white", fill_color="white", save_img=False, 
+def create_mosaic(base_map=(20, 12), base_tile_size=100, step=1, bg_color="white", fill_color="white", save_img=False,
                   save_folder=None, coords=None, exp=None):
     # Get properties of mosaic
     dims = base_map[0] // step, base_map[1] // step
@@ -57,7 +57,7 @@ def create_mosaic(base_map=(27, 27), base_tile_size=100, step=1, bg_color="white
         row = int(i / dims[0])
         col = i - dims[0] * row
         if(x in coords):
-            img = Image.open(glob.glob(save_folder + '\\single_images\\{}_grid_{}_{}*.png'.format(exp, x[0], x[1]))[-1]).resize((width,height))
+            img = Image.open(glob.glob(save_folder + 'elite_{}-{}*.png'.format(x[0], x[1]))[-1]).resize((width,height))
             img = ImageOps.expand(img,border=1,fill='black')
             img = img.rotate(-90)
             grid_img.paste(img, (col * height, row * width))#(col * width, row * height))

@@ -189,7 +189,7 @@ from typing import List
 from PIL import Image, ImageDraw
 
 
-def draw_polygons(polygons, colors, im_size=(512, 512), b_color="white", fpath=None):
+def draw_polygons(polygons, colors, im_size=(256, 256), b_color="white", fpath=None):
     image = Image.new("RGBA", im_size, color="white")  # Image.new("L", im_size, color="white")
     draw = ImageDraw.Draw(image)
 
@@ -365,6 +365,8 @@ class LocalGenerator:
 
 
 class ArchitextGenotype(Genotype):
+
+    visualization_dict = {"living_room": [249, 222, 182], "kitchen": [195, 209, 217], "bedroom": [250, 120, 128], "bathroom": [126, 202, 234], "corridor": [132, 151, 246]}
     architext_colors = [[0, 0, 0], [249, 222, 182], [195, 209, 217], [250, 120, 128], [126, 202, 234], [190, 0, 198],
                         [255, 255, 255],
                         [6, 53, 17], [17, 33, 58], [132, 151, 246], [197, 203, 159], [6, 53, 17], ]
@@ -380,6 +382,7 @@ class ArchitextGenotype(Genotype):
 
         self.height = height
         self.valid = self.validate()
+
 
     def get_clean_layout(self) -> str:
         if (len(self.layout.split('[layout]')) > 1):
@@ -417,6 +420,11 @@ class ArchitextGenotype(Genotype):
             polygons.append(Polygon(np.array(rec, dtype=int)))
 
         return polygons
+
+    def get_colors(self) -> list:
+        spaces = self.get_spaces()
+        colors = [self.visualization_dict[space] for space in spaces]
+        return colors
 
     def gfa(self) -> str:
         polygons = self.get_polygons()
@@ -479,7 +487,8 @@ class ArchitextGenotype(Genotype):
 
     def get_image(self):
         polygons = self.get_polygons()
-        return draw_polygons(polygons, self.architext_colors)[1]
+        colors = self.get_colors()
+        return draw_polygons(polygons, colors)[1]
 
     def _repr_png_(self):
         return self.get_image().tobytes()
