@@ -291,48 +291,6 @@ def find_distance(seed_graph, target_graphs):
     return distances
 
 
-def eval_function(samples, prompts, prompt_types):
-    semantic_accuracy = []
-    reward = []
-    # assuming a batch of layouts sampled from the model
-    for prompt, layout, prompt_type in zip(prompts, samples, prompt_types):
-        geom = []
-        try:
-            # get layout geometry
-            spaces, _, polygons = extract_layout_properties(layout)
-            for poly in polygons:
-                poly = [x for x in poly if x != ['']]
-                poly = [x for x in poly if '' not in x]
-                geom.append(Polygon(np.array(poly, dtype=int)))
-
-            # get geometric properties: centroids and vectors
-            room_centroids = get_room_centroids(geom)
-            vectors = get_room_vectors(geom, room_centroids)
-
-            # get layout annotations based on number of rooms and location
-            desc = []
-            num_desc = num_rooms_annotation(spaces)
-            desc.extend(list(set(flatten(num_desc))))
-            loc_desc = location_annotations(spaces, vectors)
-            desc.extend(list(set(flatten(loc_desc))))
-            desc = [re.sub('_', ' ', d) for d in desc]
-
-            # calculate semantic accuracy: number of generations that satisfy the prompt
-            semantic_accuracy.append(prompt in desc)
-
-            # calculate reward according to type of prompt: difference or distance
-            type_reward = get_reward(prompt, spaces, desc, prompt_type)
-            reward.append(type_reward)
-        except:
-            # what type of values should we put when the model fails to create a valid design?
-            semantic_accuracy.append(-1)
-            reward.append(-1)
-
-    results = {'semantic_accuracy': semantic_accuracy, 'reward': reward}
-    # results.append((semantic_accuracy, type_reward))
-    return results
-
-
 housegan_labels = {"living_room": 1, "kitchen": 2, "bedroom": 3, "bathroom": 4, "missing": 5, "closet": 6,
                    "balcony": 7, "corridor": 8, "dining_room": 9, "laundry_room": 10}
 regex = re.compile(".*?\((.*?)\)")
@@ -367,10 +325,6 @@ class LocalGenerator:
 class ArchitextGenotype(Genotype):
 
     visualization_dict = {"living_room": [249, 222, 182], "kitchen": [195, 209, 217], "bedroom": [250, 120, 128], "bathroom": [126, 202, 234], "corridor": [132, 151, 246]}
-    architext_colors = [[0, 0, 0], [249, 222, 182], [195, 209, 217], [250, 120, 128], [126, 202, 234], [190, 0, 198],
-                        [255, 255, 255],
-                        [6, 53, 17], [17, 33, 58], [132, 151, 246], [197, 203, 159], [6, 53, 17], ]
-
     end_token_str = '<|endoftext|>'
 
     def __init__(self, code: str, height: float, layout: Optional[str]):
@@ -382,7 +336,6 @@ class ArchitextGenotype(Genotype):
 
         self.height = height
         self.valid = self.validate()
-
 
     def get_clean_layout(self) -> str:
         if (len(self.layout.split('[layout]')) > 1):
@@ -471,6 +424,12 @@ class ArchitextGenotype(Genotype):
         floor_area = joined.area
         hlff = (2 * floor_area + surface_area) / floor_area
         return -hlff
+
+    def gfa(self) -> float:
+        # Quality - hlff
+        joined = unary_union(self.get_polygons())  # need to add this property to individual
+        gfa = joined.area
+        return gfa
 
     def gfa_entropy(self) -> float:
         room_gfa = [rm.area for rm in self.get_polygons()]
