@@ -327,7 +327,7 @@ class ArchitextGenotype(Genotype):
     visualization_dict = {"living_room": [249, 222, 182], "kitchen": [195, 209, 217], "bedroom": [250, 120, 128], "bathroom": [126, 202, 234], "corridor": [132, 151, 246]}
     end_token_str = '<|endoftext|>'
 
-    def __init__(self, code: str, height: float, layout: Optional[str]):
+    def __init__(self, code: str, height: float, layout: Optional[str]), parent=None:
         self.code = code
 
         end_index = layout.find(self.end_token_str)
@@ -336,6 +336,8 @@ class ArchitextGenotype(Genotype):
 
         self.height = height
         self.valid = self.validate()
+
+        self.parent = parent
 
     def get_clean_layout(self) -> str:
         if (len(self.layout.split('[layout]')) > 1):
@@ -379,11 +381,6 @@ class ArchitextGenotype(Genotype):
         colors = [self.visualization_dict[space] for space in spaces]
         return colors
 
-    def gfa(self) -> str:
-        polygons = self.get_polygons()
-        gfa = np.sum(np.array([poly.area() for poly in polygons]))
-        return gfa
-
     def __str__(self) -> str:
         return self.layout if self.valid else ""
 
@@ -426,9 +423,8 @@ class ArchitextGenotype(Genotype):
         return -hlff
 
     def gfa(self) -> float:
-        # Quality - hlff
-        joined = unary_union(self.get_polygons())  # need to add this property to individual
-        gfa = joined.area
+        polygons = self.get_polygons()
+        gfa = np.sum(np.array([poly.area/14.2 for poly in polygons]))
         return gfa
 
     def gfa_entropy(self) -> float:
@@ -467,7 +463,7 @@ class Architext(BaseEnvironment):
     # Record different definitions of behaviour spaces in a dict. Feel free to add.
     behaviour_mode_spec = {'hlff_and_fae':
                                {'genotype_ndim': 2,
-                                'genotype_space': np.array([[0.5, 5.5], [0, 10]]).T
+                                'genotype_space': np.array([[0.5, 5.5], [0, 2000]]).T
                                 }
                            }
     model_param = {'do_sample': True,
@@ -514,7 +510,7 @@ class Architext(BaseEnvironment):
         Returns:
             the generated layout in a string representation.
         """
-        return [ArchitextGenotype(code='', layout=x, height=self.height) for x in
+        return [ArchitextGenotype(code='', layout=x, height=self.height, parent=x) for x in
                 self._get_layout(self.seed + random.choice(self.prompts), **self.model_param, **kwargs)]
 
     def mutate(self, x: Genotype, **kwargs) -> List[ArchitextGenotype]:
@@ -525,7 +521,7 @@ class Architext(BaseEnvironment):
         cut_off = min(cut_off, len(lines) - 1)
         new_prompt = random_prompt + ' ' + ', '.join(lines[1:cut_off + 1]) + ", " + random.choice(self.room_labels) + ":"
 
-        return [ArchitextGenotype(code='', layout=x, height=self.height) for x in
+        return [ArchitextGenotype(code='', layout=x, height=self.height, parent=x) for x in
                 self._get_layout(new_prompt, **self.model_param, **kwargs)]
 
     '''
@@ -614,7 +610,7 @@ class Architext(BaseEnvironment):
             return None
 
         try:
-            return np.array([x.gfa_entropy(), x.typology()])
+            return np.array([x.gfa_entropy(), x.gfa()])
         except:
             return None
 
@@ -669,7 +665,7 @@ def main():
             pickle.dump(elites, f)
         qd_score.append(elites.qd_score)
     np.save('test.npy', np.array(qd_score))
-    g = lineplot(np.arange(1, len(qd_score)+1, 1), np.array(qd_score), color='green', xlabel='Iteration', ylabel='QD Score', title="Architext with prompt-based mutation - QD Score", fontsize=20, ymax=150, xmax=10, save_file='QDScore_architext_entropy-typology_hlff.png')
+    g = lineplot(np.arange(1, len(qd_score)+1, 1), np.array(qd_score), color='green', xlabel='Iteration', ylabel='QD Score', title="Architext with prompt-based mutation - QD Score", fontsize=20, ymax=150, xmax=10, save_file='QDScore_architext_entropy-gfa_hlff.png')
     g.figure.savefig('test.png')
 if __name__ == '__main__':
     main()
