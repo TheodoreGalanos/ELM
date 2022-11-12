@@ -327,7 +327,7 @@ class ArchitextGenotype(Genotype):
     visualization_dict = {"living_room": [249, 222, 182], "kitchen": [195, 209, 217], "bedroom": [250, 120, 128], "bathroom": [126, 202, 234], "corridor": [132, 151, 246]}
     end_token_str = '<|endoftext|>'
 
-    def __init__(self, code: str, height: float, layout: Optional[str]):
+    def __init__(self, code: str, height: float, layout: Optional[str], parent=None):
         self.code = code
 
         end_index = layout.find(self.end_token_str)
@@ -336,6 +336,8 @@ class ArchitextGenotype(Genotype):
 
         self.height = height
         self.valid = self.validate()
+
+        self.parent = parent
 
     def get_clean_layout(self) -> str:
         if (len(self.layout.split('[layout]')) > 1):
@@ -525,7 +527,7 @@ class Architext(BaseEnvironment):
         cut_off = min(cut_off, len(lines) - 1)
         new_prompt = random_prompt + ' ' + ', '.join(lines[1:cut_off + 1]) + ", " + random.choice(self.room_labels) + ":"
 
-        return [ArchitextGenotype(code='', layout=x, height=self.height) for x in
+        return [ArchitextGenotype(code='', layout=elem, height=self.height, parent=x) for elem in
                 self._get_layout(new_prompt, **self.model_param, **kwargs)]
 
     '''
